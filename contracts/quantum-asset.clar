@@ -71,3 +71,83 @@
 (define-read-only (get-portfolio (portfolio-id uint))
   (map-get? Portfolios portfolio-id)
 )
+
+;; Fetch specific asset details within a portfolio
+(define-read-only (get-portfolio-asset
+    (portfolio-id uint)
+    (token-id uint)
+  )
+  (map-get? PortfolioAssets {
+    portfolio-id: portfolio-id,
+    token-id: token-id,
+  })
+)
+
+;; Get all portfolios owned by a specific user
+(define-read-only (get-user-portfolios (user principal))
+  (default-to (list) (map-get? UserPortfolios user))
+)
+
+;; Calculate rebalancing requirements and recommendations
+(define-read-only (calculate-rebalance-amounts (portfolio-id uint))
+  (let (
+      (portfolio (unwrap! (get-portfolio portfolio-id) ERR-INVALID-PORTFOLIO))
+      (total-value (get total-value portfolio))
+    )
+    (ok {
+      portfolio-id: portfolio-id,
+      total-value: total-value,
+      needs-rebalance: (> (- stacks-block-height (get last-rebalanced portfolio)) u144), ;; 24 hours in blocks
+    })
+  )
+)
+
+;; PRIVATE UTILITY FUNCTIONS
+
+;; Validate token ID against portfolio constraints
+(define-private (validate-token-id
+    (portfolio-id uint)
+    (token-id uint)
+  )
+  (let ((portfolio (unwrap! (get-portfolio portfolio-id) false)))
+    (and
+      (< token-id MAX-TOKENS-PER-PORTFOLIO)
+      (< token-id (get token-count portfolio))
+      true
+    )
+  )
+)
+
+;; Ensure percentage values are within valid bounds
+(define-private (validate-percentage (percentage uint))
+  (and (>= percentage u0) (<= percentage BASIS-POINTS))
+)
+
+;; Validate that portfolio percentages follow allocation rules
+(define-private (validate-portfolio-percentages (percentages (list 10 uint)))
+  (fold check-percentage-sum percentages true)
+)
+
+;; Helper function for percentage validation
+(define-private (check-percentage-sum
+    (current-percentage uint)
+    (valid bool)
+  )
+  (and valid (validate-percentage current-percentage))
+)
+
+;; Add portfolio to user's portfolio collection
+(define-private (add-to-user-portfolios
+    (user principal)
+    (portfolio-id uint)
+  )
+  (let (
+      (current-portfolios (get-user-portfolios user))
+      (new-portfolios (unwrap! (as-max-len? (append current-portfolios portfolio-id) u20)
+        ERR-USER-STORAGE-FAILED
+      ))
+    )
+    (map-set UserPortfolios user new-portfolios)
+    (ok true)
+  )
+)
